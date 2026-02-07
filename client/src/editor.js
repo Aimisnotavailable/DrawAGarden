@@ -1,30 +1,23 @@
 import { STATE } from './state.js';
 import { uploadPlant } from './network.js';
 
-// Internal State
+// --- Internal State ---
 let activeLayer = 'stem';
 let isDrawing = false;
 let modal = null;
 
-// References to our canvas stack
+// --- LAYER STORAGE ---
 const layers = {
-    stem:   { canvas: null, ctx: null, btn: null, color: '#4caf50' },
-    leaves: { canvas: null, ctx: null, btn: null, color: '#2e7d32' },
-    flower: { canvas: null, ctx: null, btn: null, color: '#e91e63' }
+    stem:   { canvas: null, ctx: null, btn: null, color: '#4caf50', size: 15 },
+    leaves: { canvas: null, ctx: null, btn: null, color: '#2e7d32', size: 10 },
+    flower: { canvas: null, ctx: null, btn: null, color: '#e91e63', size: 8 }
 };
 
-const PALETTE = [
-    '#2e7d32', '#4caf50', '#81c784', // Greens
-    '#c62828', '#e53935', '#ff8a80', // Reds
-    '#f9a825', '#ffeb3b', '#fff59d', // Yellows
-    '#6a1b9a', '#ab47bc', '#e1bee7', // Purples
-    '#3e2723', '#795548', '#ffffff'  // Browns/White
-];
-
 export function initEditor() {
+    console.log("🔧 [Editor] Init...");
     modal = document.getElementById('editor-modal');
     
-    // 1. Initialize Layers
+    // 1. Initialize Canvas Layers
     ['stem', 'leaves', 'flower'].forEach(key => {
         const c = document.getElementById(`canvas-${key}`);
         const b = document.getElementById(`btn-layer-${key}`);
@@ -34,46 +27,51 @@ export function initEditor() {
             layers[key].ctx = c.getContext('2d', { willReadFrequently: true });
             layers[key].btn = b;
 
-            // Input Handling
             c.addEventListener('mousedown', (e) => startStroke(e, key));
             c.addEventListener('mousemove', (e) => drawStroke(e, key));
             c.addEventListener('mouseup', endStroke);
             c.addEventListener('mouseout', endStroke);
-        } else {
-            console.error(`Editor: Missing elements for layer ${key}`);
         }
     });
 
-    // 2. Initialize Palette
-    const pContainer = document.getElementById('palette-container');
-    if (pContainer) {
-        PALETTE.forEach(color => {
-            const el = document.createElement('div');
-            el.className = 'swatch';
-            el.style.backgroundColor = color;
-            el.onclick = () => {
-                layers[activeLayer].color = color;
-                // Visual feedback could go here
-            };
-            pContainer.appendChild(el);
+    // 2. Initialize Inputs
+    const colorInput = document.getElementById('editor-color');
+    const sizeInput = document.getElementById('editor-size');
+    const sizeDisplay = document.getElementById('size-display');
+
+    if (colorInput) {
+        colorInput.addEventListener('input', (e) => {
+            layers[activeLayer].color = e.target.value;
         });
     }
 
-    // 3. UI Bindings
+    if (sizeInput) {
+        const updateSize = (e) => {
+            const val = parseInt(e.target.value);
+            layers[activeLayer].size = val; 
+            if(sizeDisplay) sizeDisplay.innerText = val + 'px';
+        };
+        sizeInput.addEventListener('input', updateSize);
+        sizeInput.addEventListener('change', updateSize);
+    }
+
+    // 3. Buttons
     document.getElementById('btn-save')?.addEventListener('click', saveAndClose);
     document.getElementById('btn-cancel')?.addEventListener('click', closeEditor);
     document.getElementById('btn-clear')?.addEventListener('click', clearCurrentLayer);
 
-    // Expose to window for HTML onclick handlers
     window.editor = { setLayer: switchLayer };
 }
 
 export function openEditor(x, y) {
     STATE.pendingLoc = { x, y };
     
-    // Clear all canvases for a fresh start
+    // Clear all canvases DYNAMICALLY
     Object.values(layers).forEach(l => {
-        if(l.ctx) l.ctx.clearRect(0, 0, 160, 160);
+        if(l.ctx) {
+            // FIX: Use actual canvas width/height instead of hardcoded 160
+            l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
+        }
     });
 
     if(modal) modal.style.display = 'block';
@@ -86,40 +84,51 @@ function closeEditor() {
 
 function switchLayer(key) {
     activeLayer = key;
-    
-    // Update DOM visibility/classes
+    const l = layers[key];
+
+    // Update UI
+    const colorInput = document.getElementById('editor-color');
+    const sizeInput = document.getElementById('editor-size');
+    const sizeDisplay = document.getElementById('size-display');
+
+    if(colorInput) colorInput.value = l.color;
+    if(sizeInput) {
+        sizeInput.value = l.size;
+        if(sizeDisplay) sizeDisplay.innerText = l.size + "px";
+    }
+
+    // Toggle Visibility
     Object.keys(layers).forEach(k => {
-        const l = layers[k];
+        const item = layers[k];
         if (k === key) {
-            l.canvas.classList.add('active');
-            l.canvas.classList.remove('inactive');
-            l.btn.classList.add('active');
+            item.canvas.classList.add('active');
+            item.canvas.classList.remove('inactive');
+            item.btn.classList.add('active');
         } else {
-            l.canvas.classList.remove('active');
-            l.canvas.classList.add('inactive');
-            l.btn.classList.remove('active');
+            item.canvas.classList.remove('active');
+            item.canvas.classList.add('inactive');
+            item.btn.classList.remove('active');
         }
     });
 }
 
-// --- Drawing Logic ---
-
 function startStroke(e, key) {
     if (key !== activeLayer) return;
     isDrawing = true;
-    drawStroke(e, key); // Draw initial dot
+    drawStroke(e, key);
 }
 
 function endStroke() {
     isDrawing = false;
-    const ctx = layers[activeLayer].ctx;
-    if (ctx) ctx.beginPath(); // Reset path
+    if (layers[activeLayer]?.ctx) layers[activeLayer].ctx.beginPath();
 }
 
 function drawStroke(e, key) {
     if (!isDrawing || key !== activeLayer) return;
     
     const l = layers[key];
+    
+    // Scaling Logic handles the new size automatically!
     const rect = l.canvas.getBoundingClientRect();
     const scaleX = l.canvas.width / rect.width;
     const scaleY = l.canvas.height / rect.height;
@@ -127,10 +136,10 @@ function drawStroke(e, key) {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    l.ctx.lineWidth = 10;
+    l.ctx.lineWidth = l.size; 
+    l.ctx.strokeStyle = l.color;
     l.ctx.lineCap = 'round';
     l.ctx.lineJoin = 'round';
-    l.ctx.strokeStyle = l.color;
 
     l.ctx.lineTo(x, y);
     l.ctx.stroke();
@@ -140,15 +149,13 @@ function drawStroke(e, key) {
 
 function clearCurrentLayer() {
     const l = layers[activeLayer];
-    l.ctx.clearRect(0, 0, 160, 160);
+    // FIX: Clear using the new dimensions
+    if(l.ctx) l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
 }
-
-// --- Persistence ---
 
 function saveAndClose() {
     const user = document.getElementById('username')?.value || "Guest";
     
-    // Extract Base64 PNGs
     const plantData = {
         x: STATE.pendingLoc.x,
         y: STATE.pendingLoc.y,
