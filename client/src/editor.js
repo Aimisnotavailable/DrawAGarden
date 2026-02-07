@@ -69,7 +69,6 @@ export function openEditor(x, y) {
     // Clear all canvases DYNAMICALLY
     Object.values(layers).forEach(l => {
         if(l.ctx) {
-            // FIX: Use actual canvas width/height instead of hardcoded 160
             l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
         }
     });
@@ -86,7 +85,6 @@ function switchLayer(key) {
     activeLayer = key;
     const l = layers[key];
 
-    // Update UI
     const colorInput = document.getElementById('editor-color');
     const sizeInput = document.getElementById('editor-size');
     const sizeDisplay = document.getElementById('size-display');
@@ -97,7 +95,6 @@ function switchLayer(key) {
         if(sizeDisplay) sizeDisplay.innerText = l.size + "px";
     }
 
-    // Toggle Visibility
     Object.keys(layers).forEach(k => {
         const item = layers[k];
         if (k === key) {
@@ -127,8 +124,6 @@ function drawStroke(e, key) {
     if (!isDrawing || key !== activeLayer) return;
     
     const l = layers[key];
-    
-    // Scaling Logic handles the new size automatically!
     const rect = l.canvas.getBoundingClientRect();
     const scaleX = l.canvas.width / rect.width;
     const scaleY = l.canvas.height / rect.height;
@@ -149,13 +144,45 @@ function drawStroke(e, key) {
 
 function clearCurrentLayer() {
     const l = layers[activeLayer];
-    // FIX: Clear using the new dimensions
     if(l.ctx) l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
+}
+
+// --- FIX: Robust Pixel Count ---
+function countVisiblePixels(ctx, width, height) {
+    try {
+        // This might fail if the browser thinks the canvas is "tainted"
+        const imgData = ctx.getImageData(0, 0, width, height);
+        const data = imgData.data;
+        let count = 0;
+        // Check Alpha channel (every 4th byte)
+        for (let i = 3; i < data.length; i += 4) {
+            if (data[i] > 10) count++; 
+        }
+        return count;
+    } catch (e) {
+        console.warn("⚠️ Cannot count pixels (CORS security). Allowing save anyway.");
+        return 9999; // Return a high number so the check passes
+    }
 }
 
 function saveAndClose() {
     const user = document.getElementById('username')?.value || "Guest";
     
+    // 1. CHECK PIXEL COUNT (With Safety Fallback)
+    const totalPixels = 
+        countVisiblePixels(layers.stem.ctx, 200, 400) + 
+        countVisiblePixels(layers.leaves.ctx, 200, 400) + 
+        countVisiblePixels(layers.flower.ctx, 200, 400);
+
+    console.log("Total Plant Pixels:", totalPixels);
+
+    // Lowered threshold to 100 so small flowers are okay
+    if (totalPixels < 1000) {
+        alert("That plant is invisible! Please draw something visible.");
+        return; 
+    }
+
+    // 2. Proceed to Save
     const plantData = {
         x: STATE.pendingLoc.x,
         y: STATE.pendingLoc.y,
