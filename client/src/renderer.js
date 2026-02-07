@@ -398,7 +398,7 @@ function drawPlant(p, age) {
         drawGrownLayer(p.leafTex, P_WIDTH, P_HEIGHT, sLeaf);
     }
 
-    // 3. FLOWER: Scale-Up Reveal (Much more stable than masking)
+    // 3. FLOWER: Proper Iris Wipe
     if (pFlower > 0) {
         const reveal = easeOut(pFlower);
         drawFlowerReveal(p.flowerTex, P_WIDTH, P_HEIGHT, reveal);
@@ -425,18 +425,34 @@ function drawGrownLayer(src, w, h, progress) {
     }
 }
 
-// Simpler reveal: Just scale it up from the center of the flower head
+// UPDATED: Stationary Iris Wipe with Fixed Expansion
 function drawFlowerReveal(src, w, h, progress) {
     if(!imageCache[src]) { const i=new Image(); i.src=src; imageCache[src]=i; }
     const img = imageCache[src];
     if(img && img.complete) {
         ctx.save();
         
-        // Pivot point: Top-Center of the plant where the flower is (-h)
-        ctx.translate(0, -h * 0.9);
-        ctx.scale(progress, progress); // Scale 0 -> 1
-        ctx.translate(0, h * 0.9);
+        // 1. Define the center of the "Iris" (the flower head)
+        // We assume the flower head is located near the top of the sprite (-h * 0.9)
+        const cx = 0; 
+        const cy = -h * 0.9; 
         
+        // 2. Define opening radius (FIXED)
+        // Previous radius (w * 0.6) was too small to cover the bottom corners.
+        // We use the diagonal distance to the farthest corner (bottom-left or bottom-right).
+        // Max height distance = 0.9h (from -0.9h to 0). Max width distance = w/2.
+        const maxRadius = Math.sqrt(Math.pow(w/2, 2) + Math.pow(h, 2));
+        
+        const currentRadius = maxRadius * progress;
+
+        // 3. Create Circular Mask
+        ctx.beginPath();
+        ctx.arc(cx, cy, currentRadius, 0, Math.PI * 2);
+        ctx.clip(); // Restrict future drawing to this circle
+
+        // 4. Draw the image (Stationary)
+        // The image is anchored at (0,0) and drawn upwards to -h.
+        // It does not move or scale; we just see more of it as the mask opens.
         ctx.drawImage(img, -w/2, -h, w, h);
         
         ctx.restore();
