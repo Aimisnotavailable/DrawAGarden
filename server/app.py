@@ -36,7 +36,13 @@ GLOBAL_PLANTS = load_plants()
 print(f"Server loaded {len(GLOBAL_PLANTS)} plants from {DB_FILE}")
 
 # --- SERVER SIDE WEATHER LOGIC ---
-WEATHER_TYPES = ["sunny", "cloudy", "breeze", "rain", "storm", "gale"]
+# app.py (Update this list)
+WEATHER_TYPES = [
+    "sunny", "cloudy", "breeze", "rain", "storm", "gale", 
+    "snow", "blizzard", "fog", "hail", "thunderstorm", 
+    "tornado", "hurricane", "dust_storm", "volcanic_ash", 
+    "meteor_shower", "aurora_borealis"
+]
 WEATHER_STATE = {
     "current": "sunny",
     "last_change": time.time()
