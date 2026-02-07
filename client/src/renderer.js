@@ -2,45 +2,42 @@ import { CONFIG } from './config.js';
 import { STATE } from './state.js';
 
 let canvas, ctx;
+const imageCache = {};
+const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
 
 // UI Refs
 const uiWeather = document.getElementById('weather-status');
 const uiWindSpeed = document.getElementById('wind-speed');
 const uiWindArrow = document.getElementById('wind-arrow');
 
-const imageCache = {};
-const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
-
 export function initRenderer() {
     canvas = document.getElementById('gameCanvas');
-    if (!canvas) {
-        console.error("CRITICAL: Canvas not found!"); 
-        return;
-    }
+    if (!canvas) return;
     ctx = canvas.getContext('2d');
 
-    // Generate Initial Grass
+    // Force regenerate grass to apply new Green colors
     generateGrass();
 
-    // Start Loop
     resize();
     window.addEventListener('resize', () => {
         resize();
-        generateGrass(); // Regenerate to fill new screen size
+        generateGrass();
     });
     requestAnimationFrame(loop);
 }
 
 function generateGrass() {
     STATE.grassBlades = [];
-    const count = CONFIG.GRASS_COUNT || 5000;
-    
+    const count = CONFIG.GRASS_COUNT;
     for(let i=0; i<count; i++) {
         STATE.grassBlades.push({
             x: Math.random() * window.innerWidth,
             y: Math.random() * window.innerHeight,
-            baseAngle: (Math.random() * 0.4) - 0.2, // Slight random tilt
-            color: CONFIG.COLORS[Math.floor(Math.random() * 3)] // Pick generic greens
+            baseAngle: (Math.random() * 0.2) - 0.1,
+            // Randomly pick from the new Green Palette
+            color: CONFIG.COLORS[Math.floor(Math.random() * CONFIG.COLORS.length)],
+            height: 15 + Math.random() * 15,
+            z: Math.random() // Depth for parallax swaying
         });
     }
 }
@@ -51,54 +48,75 @@ function resize() {
 }
 
 function loop(time) {
-    updatePhysics();
+    updatePhysics(time);
     draw(time);
     requestAnimationFrame(loop);
 }
 
-function updatePhysics() {
+function updatePhysics(time) {
     const targetConfig = CONFIG.WEATHER_TYPES[STATE.currentWeather];
-    const smoothFactor = 0.005;
+    const smoothFactor = 0.02;
 
+    // 1. Interpolate Force/Speed
     STATE.physics.speed = lerp(STATE.physics.speed, targetConfig.speed, smoothFactor);
     STATE.physics.force = lerp(STATE.physics.force, targetConfig.force, smoothFactor);
 
-    if (targetConfig.dir !== 0) {
-        STATE.physics.direction = targetConfig.dir;
-    }
+    // 2. DYNAMIC WIND DIRECTION
+    // We use a slow sine wave (period approx 20 seconds) to shift direction
+    // Result: Wind blows Left -> Stops -> Blows Right -> Stops
+    const windCycle = Math.sin(time * 0.0003); 
+    
+    // We mix the cycle with some noise so it's not perfectly robotic
+    const windNoise = Math.sin(time * 0.001) * 0.3;
+    STATE.physics.direction = windCycle + windNoise;
 
     STATE.physics.accumulator += STATE.physics.speed;
 
     // UI Updates
     if(uiWeather) uiWeather.innerText = targetConfig.label;
     
-    const kmh = Math.floor(STATE.physics.force * 250);
+    const kmh = Math.floor(Math.abs(STATE.physics.direction * STATE.physics.force) * 100);
     if(uiWindSpeed) uiWindSpeed.innerText = kmh;
     
-    const arrowRot = STATE.physics.direction > 0 ? 0 : 180;
+    // Rotate arrow based on actual direction
+    const arrowRot = STATE.physics.direction > 0 ? 90 : 270;
     if(uiWindArrow) uiWindArrow.style.transform = `rotate(${arrowRot}deg)`;
     
-    STATE.isRaining = targetConfig.rain;
-    updateRain();
+    // Rain Logic
+    updateRain(targetConfig.rainRate);
 }
 
-function updateRain() {
-    if(STATE.isRaining) {
-        if(Math.random() > 0.6) {
-            const windOffset = STATE.physics.force * STATE.physics.direction * 500;
+function updateRain(rate) {
+    const P = STATE.physics;
+    
+    // 1. SPAWN RAIN (Batch spawning for volume)
+    if(rate > 0) {
+        // Spawn 'rate' amount of particles per frame
+        for(let i=0; i<rate; i++) {
             STATE.rainDrops.push({
-                x: Math.random() * (canvas.width + 1000) - 500 - windOffset, 
-                y: -50,
-                speed: 15 + Math.random() * 10, 
-                len: 10 + Math.random() * 20
+                x: Math.random() * (canvas.width + 1000) - 500, 
+                y: -100, // Start well above screen
+                z: Math.random(), // Depth: 0 (far) to 1 (close)
+                speedY: 0, 
+                speedX: 0
             });
         }
     }
     
+    // 2. MOVE RAIN
     for(let i=STATE.rainDrops.length-1; i>=0; i--) {
         const d = STATE.rainDrops[i];
-        d.y += d.speed;
-        d.x += (STATE.physics.force * STATE.physics.direction) * 25; 
+        
+        // Physics based on depth (z)
+        // Close drops (z=1) move faster than far drops (z=0)
+        const depthSpeed = 15 + (d.z * 25); 
+        
+        d.y += depthSpeed;
+        
+        // Wind affects rain X. 
+        // We multiply by direction to make rain slant left or right.
+        d.x += (P.force * P.direction) * (depthSpeed * 0.5); 
+        
         if(d.y > canvas.height) STATE.rainDrops.splice(i, 1);
     }
 }
@@ -106,61 +124,106 @@ function updateRain() {
 function draw(time) {
     const weather = CONFIG.WEATHER_TYPES[STATE.currentWeather];
     
-    // Background
-    ctx.fillStyle = weather.dark ? '#0a1a0b' : '#103312';
+    // Darker background for storms
+    ctx.fillStyle = weather.dark ? '#051106' : '#153618';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const P = STATE.physics;
-    const mainWave = Math.sin(P.accumulator);
-    const drift = Math.cos(time * 0.0007) * 0.2;
-    const windValue = (mainWave + drift) * P.force * P.direction;
-
-    // Grass
-    ctx.lineWidth = 2;
-    STATE.grassBlades.forEach(blade => drawBlade(blade, windValue * 3));
-
-    // Plants
-    // PERFORMANCE FIX: Removed STATE.plants.sort() from here. Sorting happens in network.js now.
     
+    // Wind Calculations
+    const baseLean = P.force * P.direction;
+    const noise = Math.cos(P.accumulator) + Math.sin(P.accumulator * 2.7);
+    const globalWind = baseLean + (noise * 0.1 * P.force);
+
+    // --- DRAW GRASS ---
+    ctx.lineWidth = 2;
+    STATE.grassBlades.forEach(blade => {
+        // Parallax wind: blades "further back" (low z) move less
+        const localWind = globalWind * (0.8 + blade.z * 0.4);
+        drawBlade(blade, localWind);
+    });
+
+    // --- DRAW PLANTS ---
     const now = Date.now();
     STATE.hoveredPlant = null;
 
     STATE.plants.forEach(p => {
         let age = now - (p.server_time || 0);
-        const localWave = Math.sin(P.accumulator + (p.x * 0.005));
-        const staticLean = P.force * 0.5;
-        const plantWind = (localWave + staticLean) * P.force * P.direction;
+        
+        // Plant turbulence
+        const plantTurbulence = Math.sin(P.accumulator + (p.x * 0.005)) * (0.15 * P.force);
+        const rotation = baseLean + plantTurbulence;
 
         ctx.save();
         ctx.translate(p.x, p.y);
         
         const maturity = Math.min(1, age / 2000); 
-        ctx.rotate(plantWind * maturity);
+        ctx.rotate(rotation * maturity);
 
         drawPlant(p, age);
         ctx.restore();
 
-        // Hit detection
-        if(Math.abs(STATE.mouse.x - p.x) < 40 && Math.abs(STATE.mouse.y - p.y) < 80) {
+        // Hitbox
+        const hitX = p.x - (rotation * 60); 
+        if(Math.abs(STATE.mouse.x - hitX) < 40 && Math.abs(STATE.mouse.y - p.y) < 80) {
             STATE.hoveredPlant = p;
         }
     });
 
-    // Rain
+    // --- DRAW RAIN ---
     if(STATE.rainDrops.length > 0) {
-        ctx.strokeStyle = 'rgba(174, 194, 224, 0.4)';
-        ctx.lineWidth = 1;
         ctx.beginPath();
         STATE.rainDrops.forEach(d => { 
-            ctx.moveTo(d.x, d.y); 
-            ctx.lineTo(d.x + (P.force * P.direction * 10), d.y + d.len); 
+            // Render Settings based on Depth (Z)
+            // Close drops: Thicker, longer, more opaque
+            // Far drops: Thin, short, transparent
+            const length = 20 + (d.z * 30);
+            const opacity = 0.2 + (d.z * 0.4);
+            const width = 1 + (d.z * 1.5);
+
+            ctx.lineWidth = width;
+            
+            // We must set strokeStyle individually or batch them. 
+            // For performance in JS Canvas, simple batching is usually okay, 
+            // but for depth opacity we need individual or sorted draws.
+            // Simplified here: MoveTo/LineTo
+            
+            // To make opacity work in a single batch, we can't. 
+            // So we just use a middle-ground color or draw purely white with low global alpha.
+            // BETTER: Just draw them as lines.
+            
+            ctx.moveTo(d.x, d.y);
+            // Calculate tail based on wind
+            const tailX = d.x - ((P.force * P.direction) * 10);
+            const tailY = d.y - length;
+            ctx.lineTo(tailX, tailY);
         });
+        
+        ctx.strokeStyle = 'rgba(200, 230, 255, 0.4)';
         ctx.stroke();
     }
 
     if(STATE.hoveredPlant) drawNameTag(STATE.hoveredPlant);
 }
 
+function drawBlade(blade, windRad) {
+    const angle = blade.baseAngle + (windRad * 1.5);
+    const h = blade.height;
+    
+    const tipX = blade.x + Math.sin(angle) * h;
+    const tipY = blade.y - Math.cos(angle) * h;
+    const cpX = blade.x + Math.sin(angle) * (h * 0.4);
+    const cpY = blade.y - Math.cos(angle) * (h * 0.4);
+
+    ctx.strokeStyle = blade.color;
+    ctx.beginPath(); 
+    ctx.moveTo(blade.x, blade.y);
+    ctx.quadraticCurveTo(cpX, cpY, tipX, tipY); 
+    ctx.stroke();
+}
+
+// ... drawPlant, drawPivoted, drawNameTag remain unchanged ...
+// (Include them here if you are copying the whole file, otherwise keep existing)
 function drawPlant(p, age) {
     const growthTime = 12000;
     const progress = Math.min(1, age / growthTime);
@@ -201,16 +264,6 @@ function drawPivoted(src, size, scale, anchorX, anchorY) {
         ctx.drawImage(img, -size/2, -size, size, size);
         ctx.restore();
     }
-}
-
-function drawBlade(blade, wind) {
-    let angle = blade.baseAngle + wind;
-    const h = 18;
-    const tipX = blade.x + Math.sin(angle)*h, tipY = blade.y - Math.cos(angle)*h;
-    const cpX = blade.x + Math.sin(angle)*(h*0.5), cpY = blade.y - Math.cos(angle)*(h*0.5);
-    ctx.strokeStyle = blade.color;
-    ctx.beginPath(); ctx.moveTo(blade.x, blade.y);
-    ctx.quadraticCurveTo(cpX, cpY, tipX, tipY); ctx.stroke();
 }
 
 function drawNameTag(p) {

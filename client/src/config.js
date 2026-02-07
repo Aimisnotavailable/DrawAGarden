@@ -1,19 +1,26 @@
 export const CONFIG = {
-    API_URL: 'http://localhost:5000/api', // Change if hosted
+    API_URL: 'http://localhost:5000/api', 
     POLL_INTERVAL: 2000,
-    GRASS_COUNT: 6000,
+    GRASS_COUNT: 8000, // Increased density
     CANVAS_SIZE: 160,
 
-    COLORS: ['#2ecc71', '#27ae60', '#1abc9c', '#3498db', '#9b59b6', '#f1c40f', '#e67e22', '#e74c3c', '#ecf0f1', '#555', '#000'],
+    // NEW: Strictly organic green palette (No blues)
+    COLORS: [
+        '#1e361a', // Dark Forest
+        '#2d4c1e', // Deep Green
+        '#4a6b2f', // Olive
+        '#638235', // Muted Green
+        '#789440', // Fern
+        '#8f9e53'  // Dry Grass
+    ],
 
-    // PHYSICS PRESETS
-    // Direction: 1 = Right, -1 = Left. 0 = Random/Current.
     WEATHER_TYPES: {
-        sunny:       { label: "☀️ Sunny",        speed: 0.005,  force: 0.02, rain: false, dark: false, dir: 0 },
-        breeze:      { label: "🍃 Breezy",       speed: 0.015,  force: 0.08, rain: false, dark: false, dir: 0 },
-        cloudy:      { label: "☁️ Cloudy",       speed: 0.010,  force: 0.04, rain: false, dark: false, dir: 0 },
-        rain:        { label: "🌧️ Raining",      speed: 0.020,  force: 0.10, rain: true,  dark: true,  dir: 0 },
-        storm:       { label: "⛈️ Thunderstorm", speed: 0.050,  force: 0.25, rain: true,  dark: true,  dir: 1 }, // Storms usually blow hard one way
-        gale:        { label: "🌬️ Gale Force",   speed: 0.080,  force: 0.40, rain: true,  dark: true,  dir: 1 }
+        // rainRate: How many drops to spawn per frame (0 = none, 20 = heavy)
+        sunny:       { label: "☀️ Sunny",        speed: 0.005, force: 0.05, rainRate: 0,  dark: false },
+        breeze:      { label: "🍃 Breezy",       speed: 0.02,  force: 0.15, rainRate: 0,  dark: false },
+        cloudy:      { label: "☁️ Cloudy",       speed: 0.01,  force: 0.05, rainRate: 0,  dark: false },
+        rain:        { label: "🌧️ Raining",      speed: 0.03,  force: 0.20, rainRate: 5,  dark: true  },
+        storm:       { label: "⛈️ Thunderstorm", speed: 0.15,  force: 0.50, rainRate: 15, dark: true  }, 
+        gale:        { label: "🌬️ Gale Force",   speed: 0.25,  force: 0.80, rainRate: 25, dark: true  }
     }
 };
