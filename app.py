@@ -206,7 +206,7 @@ def index():
     # Serves templates/index.html
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('/admin')
+@app.route('/this_is_not_the_admin_panel')
 def admin():
     # Renders templates/admin.html with Jinja2
     return render_template('admin.html', weather_types=WEATHER_TYPES)
