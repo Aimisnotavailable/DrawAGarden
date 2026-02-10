@@ -17,8 +17,10 @@ CORS(app)
 
 # --- STATE ---
 DB_FILE = 'global_plants.json'
+STATS_FILE = 'server_stats.json' # NEW FILE for counters
+
 GLOBAL_PLANTS = []
-last_disk_save = 0
+GLOBAL_STATS = {"deaths": 0} # NEW DICT to hold stats
 
 # Admin Overrides
 admin_override = {
@@ -45,15 +47,24 @@ LAST_TICK_TIME = time.time()
 NEXT_PLANT_ID = 1
 
 def load_plants():
+    # Load Plants
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            print("Error: Save file corrupted. Starting fresh.")
-            return []
-    return []
-
+                global GLOBAL_PLANTS
+                GLOBAL_PLANTS = json.load(f)
+        except:
+            GLOBAL_PLANTS = []
+            
+    # NEW: Load Stats
+    if os.path.exists(STATS_FILE):
+        try:
+            with open(STATS_FILE, 'r') as f:
+                global GLOBAL_STATS
+                GLOBAL_STATS = json.load(f)
+        except:
+            GLOBAL_STATS = {"deaths": 0}
+            
 def save_plants():
     try:
         with open(DB_FILE, 'w') as f:
@@ -61,7 +72,16 @@ def save_plants():
     except Exception as e:
         print(f"Error saving to disk: {e}")
 
-GLOBAL_PLANTS = load_plants()
+def save_stats():
+    # NEW: Save Stats
+    try:
+        with open(STATS_FILE, 'w') as f:
+            json.dump(GLOBAL_STATS, f)
+    except Exception as e:
+        print(f"Error saving to disk: {e}")
+
+
+# GLOBAL_PLANTS = load_plants()
 print(f"Server loaded {len(GLOBAL_PLANTS)} plants from {DB_FILE}")
 
 def update_weather_logic():
@@ -103,25 +123,38 @@ def update_weather_logic():
         env_state["puddle_level"] = max(0.0, env_state["puddle_level"] - dry_rate)
 
 def update_world_physics():
-    global LAST_TICK_TIME, GLOBAL_PLANTS
+    global LAST_TICK_TIME, GLOBAL_PLANTS, GLOBAL_STATS
     now = time.time()
     dt = now - LAST_TICK_TIME
     LAST_TICK_TIME = now
 
     state_changed = False 
-    is_stormy = current_weather in ['storm', 'blizzard', 'tornado', 'hail']
+    stats_changed = False # Track if we need to save stats
     
-    # 1. REMOVE DEAD PLANTS (Garbage Collection)
-    # If a plant has been dead for more than 10 seconds, delete it forever.
-    # This gives clients time to play the "Death Animation".
+    # 1. REMOVE DEAD PLANTS
     initial_count = len(GLOBAL_PLANTS)
-    GLOBAL_PLANTS = [
-        p for p in GLOBAL_PLANTS 
-        if not (p.get('stats', {}).get('dead', False) and 
-                now - p['stats'].get('death_time', 0) > 10)
-    ]
+    
+    survivors = []
+    for p in GLOBAL_PLANTS:
+        s = p.get('stats', {})
+        # If dead and time is up (10s animation), delete it
+        if s.get('dead', False) and now - s.get('death_time', 0) > 10:
+             continue 
+        survivors.append(p)
+        
+    # Count deaths
+    deleted_count = initial_count - len(survivors)
+    if deleted_count > 0:
+        GLOBAL_STATS["deaths"] += deleted_count
+        stats_changed = True
+        state_changed = True
+        
+    GLOBAL_PLANTS = survivors
+    
     if len(GLOBAL_PLANTS) != initial_count:
         state_changed = True
+
+    is_stormy = current_weather in ['storm', 'blizzard', 'tornado', 'hail']
 
     for p in GLOBAL_PLANTS:
         if 'stats' not in p:
@@ -163,6 +196,8 @@ def update_world_physics():
 
     if state_changed:
         save_plants()
+    if stats_changed:
+        save_stats()
         
 # --- ROUTES ---
 
@@ -229,20 +264,17 @@ def protect_plant():
 
 @app.route('/api/updates', methods=['GET'])
 def get_updates():
-    # 1. RUN PHYSICS! (Critical: Plants won't die without this)
     update_world_physics()
     update_weather_logic()
     
     current_time = (time.time() + (admin_override["time_offset"] * 3600)) * 1000
     
-    # 2. IGNORE 'SINCE' FOR PLANTS
-    # Always return the FULL list so the client knows what was deleted.
-    # We only send basic stats to keep it light if you want, but sending full obj is safer.
     return jsonify({
         "time": current_time,
         "weather": current_weather,
         "env": env_state,
-        "plants": GLOBAL_PLANTS # <--- ALWAYS SEND ALL PLANTS
+        "plants": GLOBAL_PLANTS,
+        "deaths": GLOBAL_STATS["deaths"] # Send persistent count
     })
 
 @app.route('/api/admin/update', methods=['POST'])

@@ -46,7 +46,9 @@
                     ✨ <span id="ui-beams">0%</span>
                 </div>
 
-                <div class="panel">🌱 <span id="ui-plant-count">0</span></div>
+                <div class="panel" style="color: green;">🌱 PLANTS ALIVE:  <span id="ui-plant-count">0</span></div>
+                <div class="panel" style="color: #f44336;">💀 GRAVEYARD: <span id="ui-death-count">0</span></div>
+
 
                 <div class="panel">
                     👤 <input type="text" id="username" value="Guest" 
@@ -56,7 +58,7 @@
             </div>
         </div>
     </div>
-    
+
     <div id="plant-tooltip" style="display: none; position: absolute; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; border: 1px solid #4caf50; pointer-events: none; z-index: 100;">
         <div id="tooltip-author" style="font-weight: bold; color: #4caf50;"></div>
         <div style="font-size: 12px;">HP: <span id="tooltip-hp"></span></div>

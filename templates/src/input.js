@@ -1,40 +1,56 @@
 import { STATE } from './state.js';
 import { openEditor } from './editor.js';
-import { protectPlant } from './network.js'; // Changed import
+import { protectPlant } from './network.js'; 
+import { AUDIO } from './audio.js';          
+
+let lastShieldTime = 0; 
 
 export function initInput() {
     console.log("[System] Initializing Input...");
     const canvas = document.getElementById('gameCanvas');
 
-    // 1. Track Mouse for Hover Effects (Renderer uses this)
+    // 1. Track Mouse (Keep this for visuals/tooltips)
     window.addEventListener('mousemove', (e) => {
         STATE.mouse.x = e.clientX;
         STATE.mouse.y = e.clientY;
     });
 
-    // 2. Handle Clicks (Open Editor)
-    window.addEventListener('mousedown', (e) => {
-        // Prevent opening editor if clicking on UI elements (HUD, Buttons)
-        if (e.target.id !== 'gameCanvas') return;
-
-        // Prevent opening editor if we are hovering an existing plant
-        if (STATE.hoveredPlant) {
-            console.log(`Clicked plant by: ${STATE.hoveredPlant.author}`);
-            return;
-        }
-
-        // Open the editor at these coordinates
-        openEditor(e.clientX, e.clientY);
-    });
-
+    // 2. Handle Clicks
     window.addEventListener('mousedown', (e) => {
         if (e.target.id !== 'gameCanvas') return;
 
-        if (STATE.hoveredPlant) {
-            // New Action: Protect!
-            protectPlant(STATE.hoveredPlant.id);
-            return;
+        const clickX = e.clientX;
+        const clickY = e.clientY;
+        
+        // --- NEW HITBOX CHECK ---
+        // Find a plant that is close to the mouse click
+        // Box: 60px wide (30px L/R), 180px tall (from base upwards)
+        const clickedPlant = STATE.plants.find(p => {
+            const dx = Math.abs(p.x - clickX);
+            const dy = p.y - clickY; // positive means click is ABOVE base
+            
+            // Check: Within 40px left/right AND between 0px and 200px up
+            return (dx < 40 && dy > 0 && dy < 200);
+        });
+
+        if (clickedPlant) {
+            // A. Cooldown Check (2 Seconds)
+            const now = Date.now();
+            if (now - lastShieldTime < 2000) { 
+                console.log("⏳ Shield recharging...");
+                return; 
+            }
+            
+            // B. Action!
+            console.log(`🛡️ Protecting Plant ${clickedPlant.id}`);
+            protectPlant(clickedPlant.id); 
+            AUDIO.play('protect');               
+            lastShieldTime = now;
+            
+            return; // STOP here. Do not open editor.
         }
-        // ... open editor logic ...
+
+        // --- IF NO PLANT HIT, OPEN EDITOR ---
+        openEditor(clickX, clickY);
     });
 }

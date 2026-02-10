@@ -1,5 +1,6 @@
 import { CONFIG } from './config.js';
 import { STATE } from './state.js';
+import { AUDIO } from './audio.js';
 
 // --- 1. UPLOAD PLANT ---
 export function uploadPlant(plantData) {
@@ -18,39 +19,46 @@ export function uploadPlant(plantData) {
 
 // --- 2. POLL UPDATES ---
 export function pollUpdates() {
-    // We can ignore 'since' for plants now, but keep it for other potential optimizations
     const lastTime = STATE.lastServerTime || 0;
 
     fetch(`${CONFIG.API_URL}/updates?since=${lastTime}`)
         .then(res => res.json())
         .then(data => {
             if(data.plants) {
-                const serverIds = new Set(data.plants.map(p => p.id));
-                
                 // 1. DELETE: Remove plants not present in the server list
+                const serverIds = new Set(data.plants.map(p => p.id));
                 for (let i = STATE.plants.length - 1; i >= 0; i--) {
                     if (!serverIds.has(STATE.plants[i].id)) {
-                        console.log(`💀 Plant ${STATE.plants[i].id} died. Removing.`);
                         STATE.plants.splice(i, 1);
                     }
                 }
 
-                // 2. ADD / UPDATE
+                // 2. ADD / UPDATE (Merged Loop)
                 data.plants.forEach(incoming => {
                     const existing = STATE.plants.find(p => p.id === incoming.id);
+                    
                     if (existing) {
-                        // Update stats
+                        // --- CRITICAL FIX: Check Death BEFORE updating stats ---
+                        const wasAlive = !existing.stats.dead;
+                        const isNowDead = incoming.stats.dead;
+
+                        if (wasAlive && isNowDead) {
+                            console.log(`💀 Plant ${existing.id} has withered.`);
+                            AUDIO.play('shatter'); // Triggers the "Wither" sound
+                        }
+                        
+                        // Now it is safe to overwrite stats
                         existing.stats = incoming.stats;
                     } else {
-                        // Add new
+                        // Add new plant
                         STATE.plants.push(incoming);
                     }
                 });
                 
-                // 3. Sort for depth
+                // 3. Sort for depth (visual layering)
                 STATE.plants.sort((a,b) => a.y - b.y);
             }
-            
+
             // B. Sync Time
             if(data.server_time) STATE.lastServerTime = data.server_time;
             
@@ -63,6 +71,12 @@ export function pollUpdates() {
             if(data.env) {
                 if(typeof data.env.snow_level === 'number') STATE.world.snowLevel = data.env.snow_level;
                 if(typeof data.env.puddle_level === 'number') STATE.world.puddleLevel = data.env.puddle_level;
+            }
+
+            // E. Sync Death Count
+            if (typeof data.deaths === 'number') {
+                const el = document.getElementById('ui-death-count');
+                if(el) el.innerText = data.deaths;
             }
         })
         .catch(err => console.error("Polling error:", err))

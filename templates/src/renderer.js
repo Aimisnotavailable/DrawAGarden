@@ -457,14 +457,17 @@ function drawPlant(p, rotation, age) {
     const stats = p.stats || { hp: 100, maxHp: 100, dead: false };
     const hpPercent = Math.max(0, stats.hp / stats.maxHp);
     const isProtected = (stats.protect_until || 0) > (Date.now() / 1000);
+    
+    // Time Check (Global variable from your renderer)
+    const isNight = timeOfDay > 0.75 || timeOfDay < 0.25;
 
     ctx.save();
-
+    
     // 3. MOVE TO PLANT BASE
     ctx.translate(p.x, p.y);
 
-    // --- [NEW] DEATH ANIMATIONS ---
-    // If dead, apply transforms (spin, fly away, etc.) BEFORE drawing
+    // --- DEATH ANIMATIONS ---
+    // If dead, apply transforms (spin, fly away, etc.)
     if (stats.dead) {
         const timeSinceDeath = (Date.now() / 1000) - (stats.death_time || 0);
         
@@ -486,39 +489,30 @@ function drawPlant(p, rotation, age) {
         }
     }
 
-    // --- [NEW] VISUAL WITHERING ---
+    // --- VISUAL WITHERING ---
     // If alive but damaged, turn brown/sepia
     if (!stats.dead && hpPercent < 1.0) {
         const dmg = 1.0 - hpPercent;
         ctx.filter = `sepia(${dmg}) grayscale(${dmg * 0.5})`; 
     }
 
-    // --- [NEW] SHIELD VISUAL ---
-    if (isProtected && !stats.dead) {
+    // --- SHADOW LAYER ---
+    // Draw BEFORE rotation so it stays flat on the ground.
+    // Only draw if it's DAYTIME and the plant is NOT DEAD/FLYING.
+    if (!isNight && !stats.dead) {
         ctx.save();
-        ctx.shadowColor = '#00bfff';
-        ctx.shadowBlur = 20;
-        ctx.strokeStyle = 'rgba(0, 191, 255, 0.6)';
-        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.3 * hpPercent; // Shadow fades if plant is dying
+        ctx.fillStyle = 'rgba(0,0,0,1)';
         ctx.beginPath();
-        // Draw bubble centered slightly up from the base
-        ctx.arc(0, -60, 50, 0, Math.PI * 2);
-        ctx.stroke();
-        // Subtle pulse fill
-        ctx.fillStyle = `rgba(0, 191, 255, ${0.1 + Math.sin(Date.now() / 200) * 0.05})`;
+        // Draw shadow ellipse centered at (0,0) local coords
+        ctx.ellipse(0, 0, w/3, w/6, 0, 0, Math.PI*2);
         ctx.fill();
         ctx.restore();
     }
 
-    // 4. DRAW PLANT LAYERS
-    // Apply sway rotation
+    // --- PLANT LAYERS (Apply Sway) ---
+    ctx.save(); // Save before rotating for sway
     ctx.rotate(rotation);
-
-    // Draw Shadow (Local coords 0,0)
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, w/3, w/6, 0, 0, Math.PI*2);
-    ctx.fill();
 
     drawLayer(ctx, stemImg, w, h, Math.min(1.0, progress * 1.5), false);
     
@@ -530,41 +524,61 @@ function drawPlant(p, rotation, age) {
         const applySnow = visualState.snowLevel > 0.3;
         drawLayer(ctx, flowerImg, w, h, (progress - 0.5) / 0.5, applySnow);
     }
+    ctx.restore(); // Restore to remove rotation (so UI doesn't spin)
 
-    // Reset rotation so UI doesn't spin with the plant sway
-    ctx.rotate(-rotation);
-    
-    // Reset filters so the Health Bar isn't brown/sepia
+    // Reset filters so UI/Shields look normal
     ctx.filter = 'none'; 
+    ctx.globalAlpha = 1.0;
 
-    // 5. HOVER DETECTION
-    // We use Global Coordinates for mouse check (p.x is global, mouse is global)
-    // The previous translate() affects DRAWING, not the variables p.x/p.y
-    if (Math.abs(STATE.mouse.x - p.x) < 40 && 
-        STATE.mouse.y < p.y && 
-        STATE.mouse.y > p.y - 150) {
-        STATE.hoveredPlant = p;
+    // --- SHIELD VISUAL ---
+    if (isProtected && !stats.dead) {
+        ctx.save();
+        ctx.shadowColor = '#00bfff';
+        ctx.shadowBlur = 20;
+        ctx.strokeStyle = 'rgba(0, 191, 255, 0.6)';
+        ctx.lineWidth = 3;
+        
+        // Timer Calculation
+        const timeLeft = stats.protect_until - (Date.now() / 1000);
+        const maxDuration = 60.0; 
+        const pct = Math.max(0, timeLeft / maxDuration);
+
+        ctx.beginPath();
+        // Draw Timer Ring
+        ctx.arc(0, -60, 40, -Math.PI/2, (-Math.PI/2) + (Math.PI * 2 * pct));
+        ctx.stroke();
+        
+        // Inner Pulse
+        ctx.fillStyle = `rgba(0, 191, 255, ${0.1 + Math.sin(Date.now() / 200) * 0.05})`;
+        ctx.fill();
+        ctx.restore();
     }
+
+    // --- HOVER DETECTION ---
+    // Note: p.x/p.y are global, mouse is global. 
+    // We check this here just for visual debugging if needed, 
+    // but main logic is in updateHoverState().
     
-    // 6. DRAW HEALTH BAR
-    // Drawn relative to the origin (which is now at p.x, p.y)
-    // Only show if damaged and NOT playing a death animation
+    // --- HEALTH BAR UI ---
+    // Drawn relative to the plant base (0,0)
     if (!stats.dead && hpPercent < 0.99) {
+        const barY = -70; // Height above plant
+        
         // Background (Black)
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(-20, -70, 40, 6); 
+        ctx.fillRect(-20, barY, 40, 6); 
         
-        // HP Bar (Green to Red gradient logic)
+        // HP Bar (Green -> Red)
         ctx.fillStyle = hpPercent > 0.3 ? '#4caf50' : '#f44336';
-        ctx.fillRect(-20, -70, 40 * hpPercent, 6);
+        ctx.fillRect(-20, barY, 40 * hpPercent, 6);
         
         // Border
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(-20, -70, 40, 6);
+        ctx.strokeRect(-20, barY, 40, 6);
     }
 
-    ctx.restore();
+    ctx.restore(); // Final restore to go back to global coordinates
 }
 
 function drawParticles() {
@@ -681,18 +695,26 @@ function drawAtmosphere() {
 function drawFiniteBeams() {
     if (!width || !height || width <= 0) return;
     if (STATE.currentWeather.includes('rain') || STATE.currentWeather.includes('storm')) return;
+    
     ctx.save();
     ctx.globalCompositeOperation = 'overlay'; 
+    
     visualState.beams.forEach(b => {
-        const alpha = (Math.sin(b.alphaPhase) * 0.1 + 0.15) * (1.2 - timeOfDay);
+        // BOOST: Increased base alpha from 0.15 to 0.3
+        const alpha = (Math.sin(b.alphaPhase) * 0.1 + 0.3) * (1.2 - timeOfDay);
+        
         if(alpha <= 0) return;
+        
         const tilt = (b.x - width / 2) * 0.8; 
         const xStart = b.x;
         const xEnd = b.x + tilt;
-        if (!Number.isFinite(xStart) || !Number.isFinite(xEnd) || !Number.isFinite(height)) return;
+        
         const grad = ctx.createLinearGradient(xStart, 0, xEnd, height);
-        grad.addColorStop(0, `rgba(255, 255, 230, ${b.opacity})`); 
+        
+        // BOOST: Multiplied b.opacity by 3.0 to make them brighter
+        grad.addColorStop(0, `rgba(255, 255, 230, ${b.opacity * 3.0})`); 
         grad.addColorStop(1, `rgba(255, 255, 230, 0)`);       
+        
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.moveTo(xStart - b.width/2, 0);
@@ -700,8 +722,10 @@ function drawFiniteBeams() {
         ctx.lineTo(xEnd + b.width*2, height);
         ctx.lineTo(xEnd - b.width*2, height);
         ctx.fill();
+        
         b.x += b.speed;
         b.opacity += (Math.random() - 0.5) * 0.01;
+        
         if (b.x > width + 200 || b.x < -200 || b.opacity <= 0) {
             b.x = Math.random() * width;
             b.opacity = Math.random() * 0.1 + 0.05;
