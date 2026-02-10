@@ -35,7 +35,7 @@ WEATHER_TYPES = [
 ]
 current_weather = "sunny"
 last_weather_change = 0
-WEATHER_DURATION_SEC = 600
+WEATHER_DURATION_SEC = 300
 
 # --- GLOBAL ENVIRONMENT STATE ---
 env_state = {
