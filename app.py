@@ -1,94 +1,62 @@
 from flask import Flask, jsonify, request, send_from_directory, render_template
 from flask_cors import CORS
-from pathlib import Path
+import sqlite3
 import time
 import random
-import json
 import os
 
 # 1. SETUP PATHS
-# Get the folder where this app.py is running
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Since you moved everything to 'templates', we point both configs there
 TARGET_FOLDER = os.path.join(BASE_DIR, 'templates')
+DB_PATH = os.path.join(BASE_DIR, 'database.db')
 
 app = Flask(__name__, static_folder=TARGET_FOLDER, template_folder=TARGET_FOLDER)
 CORS(app)
 
-# --- STATE ---
-DB_FILE = Path(f'{os.getcwd()}/global_plants.json') # Moved to root for easier access
-STATS_FILE = Path(f'{os.getcwd()}/server_stats.json') # NEW FILE for counters
+# --- DATABASE HELPERS ---
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-GLOBAL_PLANTS = []
-GLOBAL_STATS = {"deaths": 0} # NEW DICT to hold stats
+def init_db():
+    with get_db_connection() as conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS plants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                x REAL, y REAL,
+                stemTex TEXT, leafTex TEXT, flowerTex TEXT,
+                author TEXT,
+                hp REAL, maxHp REAL, vit REAL,
+                dead INTEGER DEFAULT 0,
+                death_time REAL DEFAULT 0,
+                death_cause TEXT,
+                protect_until REAL DEFAULT 0,
+                last_saved_hp REAL DEFAULT 0,
+                server_time REAL
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS server_stats (
+                key TEXT PRIMARY KEY,
+                value INTEGER
+            )
+        ''')
+        conn.execute("INSERT OR IGNORE INTO server_stats (key, value) VALUES ('deaths', 0)")
+        conn.commit()
 
-# Admin Overrides
-admin_override = {
-    "weather": None,
-    "time_offset": 0
-}
-
-WEATHER_TYPES = [
-    "sunny", "cloudy", "breeze", "rain", "storm", "gale", 
-    "snow", "blizzard", "hail", "fog", "tornado", "dust_storm", 
-    "volcanic_ash", "meteor_shower", "aurora_borealis"
-]
+# --- GLOBAL STATE ---
+admin_override = {"weather": None, "time_offset": 0}
+WEATHER_TYPES = ["sunny", "cloudy", "breeze", "rain", "storm", "gale", "snow", "blizzard", "hail", "fog", "tornado", "dust_storm", "volcanic_ash", "meteor_shower", "aurora_borealis"]
 current_weather = "sunny"
 last_weather_change = 0
 WEATHER_DURATION_SEC = 300
-
-# --- GLOBAL ENVIRONMENT STATE ---
-env_state = {
-    "snow_level": 0.0,
-    "puddle_level": 0.0
-}
-
+env_state = {"snow_level": 0.0, "puddle_level": 0.0}
 LAST_TICK_TIME = time.time()
-NEXT_PLANT_ID = 1
 
-def load_plants():
-    # Load Plants
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'r') as f:
-                global GLOBAL_PLANTS
-                GLOBAL_PLANTS = json.load(f)
-        except:
-            GLOBAL_PLANTS = []
-            
-    # NEW: Load Stats
-    if os.path.exists(STATS_FILE):
-        try:
-            with open(STATS_FILE, 'r') as f:
-                global GLOBAL_STATS
-                GLOBAL_STATS = json.load(f)
-        except:
-            GLOBAL_STATS = {"deaths": 20}
-            
-def save_plants():
-    try:
-        with open(DB_FILE, 'w') as f:
-            json.dump(GLOBAL_PLANTS, f, indent=2)
-    except Exception as e:
-        print(f"Error saving to disk: {e}")
-
-def save_stats():
-    # NEW: Save Stats
-    try:
-        with open(STATS_FILE, 'w') as f:
-            json.dump(GLOBAL_STATS, f)
-    except Exception as e:
-        print(f"Error saving to disk: {e}")
-
-
-# GLOBAL_PLANTS = load_plants()
-# print(f"Server loaded {len(GLOBAL_PLANTS)} plants from {DB_FILE}")
-
+# --- LOGIC ---
 def update_weather_logic():
     global current_weather, last_weather_change, env_state
-    
-    # 1. Random Weather Change
     if admin_override["weather"]:
         current_weather = admin_override["weather"]
     else:
@@ -99,197 +67,165 @@ def update_weather_logic():
             last_weather_change = now
 
     w = current_weather
-    
-    # 2. Snow Logic
     if "snow" in w or "blizzard" in w:
         rate = 0.002 if "blizzard" in w else 0.0005
         env_state["snow_level"] = min(1.0, env_state["snow_level"] + rate)
     elif "sunny" in w:
-        env_state["snow_level"] = max(0.0, env_state["snow_level"] - 0.001) # Fast melt
+        env_state["snow_level"] = max(0.0, env_state["snow_level"] - 0.001)
     else:
-        env_state["snow_level"] = max(0.0, env_state["snow_level"] - 0.0002) # Slow melt
+        env_state["snow_level"] = max(0.0, env_state["snow_level"] - 0.0002)
 
-    # 3. Puddle Logic (FIXED)
     if w == "storm" or w == "rain":
         rate = 0.005 if "storm" in w else 0.001
         env_state["puddle_level"] = min(1.0, env_state["puddle_level"] + rate)
-        # Rain melts snow fast
         env_state["snow_level"] = max(0.0, env_state["snow_level"] - 0.002)
     else:
-        # FIX: Dry out puddles for ANY weather that isn't rain (Wind, Sun, Clouds)
-        # Wind dries faster than still air
-        dry_rate = 0.002 if ("breeze" in w or "gale" in w or "dust" in w) else 0.0005
+        dry_rate = 0.002 if any(x in w for x in ["breeze", "gale", "dust"]) else 0.0005
         if "sunny" in w: dry_rate = 0.001
-        
         env_state["puddle_level"] = max(0.0, env_state["puddle_level"] - dry_rate)
 
 def update_world_physics():
-    global LAST_TICK_TIME, GLOBAL_PLANTS, GLOBAL_STATS
+    global LAST_TICK_TIME
     now = time.time()
     dt = now - LAST_TICK_TIME
     LAST_TICK_TIME = now
-
-    state_changed = False 
-    stats_changed = False # Track if we need to save stats
-    
-    # 1. REMOVE DEAD PLANTS
-    initial_count = len(GLOBAL_PLANTS)
-    
-    survivors = []
-    for p in GLOBAL_PLANTS:
-        s = p.get('stats', {})
-        # If dead and time is up (10s animation), delete it
-        if s.get('dead', False) and now - s.get('death_time', 0) > 10:
-             continue 
-        survivors.append(p)
-        
-    # Count deaths
-    deleted_count = initial_count - len(survivors)
-    if deleted_count > 0:
-        GLOBAL_STATS["deaths"] += deleted_count
-        stats_changed = True
-        state_changed = True
-        
-    GLOBAL_PLANTS = survivors
-    
-    if len(GLOBAL_PLANTS) != initial_count:
-        state_changed = True
-
     is_stormy = current_weather in ['storm', 'blizzard', 'tornado', 'hail']
 
-    for p in GLOBAL_PLANTS:
-        if 'stats' not in p:
-            p['stats'] = {"hp": 100.0, "maxHp": 100.0, "vit": 1.0}
-            state_changed = True
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Clean up old dead plants (10s after death)
+    # Note: death_time is stored in SECONDS in DB for physics math
+    cursor.execute("DELETE FROM plants WHERE dead = 1 AND (? - death_time) > 10", (now,))
+    if cursor.rowcount > 0:
+        cursor.execute("UPDATE server_stats SET value = value + ? WHERE key = 'deaths'", (cursor.rowcount,))
+    
+    plants = cursor.execute("SELECT * FROM plants WHERE dead = 0").fetchall()
+    for p in plants:
+        new_hp = p['hp']
+        is_dead = False
+        death_cause = None
+        is_protected = p['protect_until'] > now # Physics uses Seconds
         
-        s = p['stats']
-        
-        # Skip logic if already dead
-        if s.get('dead', False): continue
-
-        # 2. CHECK PROTECTION
-        # If protection is active, SKIP DAMAGE
-        is_protected = s.get('protect_until', 0) > now
-        
-        # 3. APPLY DAMAGE
         if is_stormy and not is_protected:
-            damage = 5.0 * dt
-            s['hp'] = max(0.0, float(s['hp']) - damage)
+            new_hp = max(0.0, p['hp'] - (5.0 * dt))
+            if new_hp <= 0.0:
+                is_dead = True
+                death_cause = current_weather
+        elif not is_stormy and p['hp'] < p['maxHp']:
+            new_hp = min(p['maxHp'], p['hp'] + ((1.5 * p['vit']) * dt))
+
+        if is_dead or abs(new_hp - p['last_saved_hp']) > 0.5:
+            cursor.execute('''
+                UPDATE plants SET hp = ?, dead = ?, death_time = ?, death_cause = ?, last_saved_hp = ? WHERE id = ?
+            ''', (new_hp, 1 if is_dead else 0, now if is_dead else 0, death_cause, new_hp, p['id']))
             
-            # DEATH EVENT
-            if s['hp'] <= 0.0:
-                s['hp'] = 0.0
-                s['dead'] = True
-                s['death_time'] = now # Mark time of death
-                s['death_cause'] = current_weather # Record cause for animation
-                state_changed = True
-                continue 
-        
-        # 4. REGEN (Only if not stormy and not fully healed)
-        elif not is_stormy and s['hp'] < s['maxHp']:
-            regen = (1.5 * float(s['vit'])) * dt
-            s['hp'] = min(float(s['maxHp']), s['hp'] + regen)
+    conn.commit()
+    conn.close()
 
-        # Dirty Check (Save if HP changed significantly)
-        if abs(s['hp'] - s.get('last_saved_hp', 0)) > 0.5:
-            s['last_saved_hp'] = s['hp']
-            state_changed = True
-
-    if state_changed:
-        save_plants()
-    if stats_changed:
-        save_stats()
-        
 # --- ROUTES ---
-
 @app.route('/')
-def index():
-    # Serves templates/index.html
-    return send_from_directory(app.static_folder, 'index.html')
+def index(): return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/this_is_not_the_admin_panel')
-def admin():
-    # Renders templates/admin.html with Jinja2
-    return render_template('admin.html', weather_types=WEATHER_TYPES)
+def admin(): return render_template('admin.html', weather_types=WEATHER_TYPES)
 
 @app.route('/<path:path>')
-def serve_static(path):
-    # Serves templates/main.js, templates/style.css, etc.
-    return send_from_directory(app.static_folder, path)
+def serve_static(path): return send_from_directory(app.static_folder, path)
 
 # --- API ---
-
 @app.route('/api/plant', methods=['POST'])
 def plant_seed():
-    global NEXT_PLANT_ID # Use global counter
     data = request.json
+    now_sec = time.time()
     
-    # FIX: Use a monotonic counter, not len(), to avoid ID reuse after death
-    new_id = NEXT_PLANT_ID
-    NEXT_PLANT_ID += 1
+    # FIX 1: Store Milliseconds for Client Compatibility
+    # But we also need Seconds for server physics checks if we used that column for logic.
+    # To be safe, we store MILLISECONDS in 'server_time' column since it is display-only.
+    client_timestamp_ms = now_sec * 1000 
     
     max_hp = int(random.uniform(80.0, 300.0))
     vit = round(random.uniform(0.5, 5.0), 2)
-    new_plant = {
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO plants (x, y, stemTex, leafTex, flowerTex, author, hp, maxHp, vit, dead, protect_until, last_saved_hp, server_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+    ''', (data.get('x'), data.get('y'), data.get('stemTex'), data.get('leafTex'), 
+          data.get('flowerTex'), data.get('author', 'Anonymous'), max_hp, max_hp, vit, max_hp, client_timestamp_ms))
+    new_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
         "id": new_id,
-        "x": data.get('x', 0),
-        "y": data.get('y', 0),
-        "stemTex": data.get('stemTex', ''),
-        "leafTex": data.get('leafTex', ''),
-        "flowerTex": data.get('flowerTex', ''),
+        "x": data.get('x'), "y": data.get('y'),
+        "stemTex": data.get('stemTex'), "leafTex": data.get('leafTex'), "flowerTex": data.get('flowerTex'),
         "author": data.get('author', 'Anonymous'),
-        "stats": {"hp": max_hp, "maxHp": max_hp, "vit": vit, "dead": False}, # Init stats immediately
-        "server_time": data.get('timestamp')
-    }
-
-    GLOBAL_PLANTS.append(new_plant)
-    save_plants()
-    return jsonify(new_plant)
+        "stats": {"hp": max_hp, "maxHp": max_hp, "vit": vit, "dead": False, "death_time": 0, "death_cause": None, "protect_until": 0},
+        "server_time": client_timestamp_ms # Return MS
+    })
 
 @app.route('/api/plant/protect', methods=['POST'])
 def protect_plant():
     data = request.json
     plant_id = data.get('id')
     now = time.time()
+    conn = get_db_connection()
+    plant = conn.execute("SELECT dead FROM plants WHERE id = ?", (plant_id,)).fetchone()
     
-    for p in GLOBAL_PLANTS:
-        if p['id'] == plant_id:
-            s = p['stats']
-            # If already dead, cannot protect
-            if s.get('dead', False):
-                 return jsonify({"error": "Too late, plant is dead."}), 400
-            
-            # Apply 60 seconds of protection
-            s['protect_until'] = now + 60 
-            save_plants()
-            return jsonify({"success": True, "protect_until": s['protect_until']})
-            
-    return jsonify({"error": "Plant not found"}), 404
+    if not plant:
+        conn.close()
+        return jsonify({"error": "Plant not found"}), 404
+    if plant['dead']:
+        conn.close()
+        return jsonify({"error": "Too late, plant is dead."}), 400
+        
+    until = now + 60 # Protection uses Seconds
+    conn.execute("UPDATE plants SET protect_until = ? WHERE id = ?", (until, plant_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "protect_until": until})
 
 @app.route('/api/updates', methods=['GET'])
 def get_updates():
     update_world_physics()
     update_weather_logic()
     
-    current_time = (time.time() + (admin_override["time_offset"] * 3600)) * 1000
+    conn = get_db_connection()
+    rows = conn.execute("SELECT * FROM plants").fetchall()
+    stats = conn.execute("SELECT value FROM server_stats WHERE key = 'deaths'").fetchone()
+    conn.close()
+    
+    plants_list = []
+    for row in rows:
+        p = dict(row)
+        
+        # FIX 2: Ensure server_time is treated as Milliseconds. 
+        # If the DB has old "Seconds" data (small numbers), we patch it on the fly.
+        if p['server_time'] and p['server_time'] < 2000000000: 
+            p['server_time'] = p['server_time'] * 1000
+
+        p['stats'] = {
+            "hp": p['hp'], "maxHp": p['maxHp'], "vit": p['vit'], 
+            "dead": bool(p['dead']), "death_time": p['death_time'], 
+            "death_cause": p['death_cause'], "protect_until": p['protect_until']
+        }
+        plants_list.append(p)
+
+    current_time_ms = (time.time() + (admin_override["time_offset"] * 3600)) * 1000
     return jsonify({
-        "time": current_time,
+        "time": current_time_ms,
         "weather": current_weather,
         "env": env_state,
-        "plants": GLOBAL_PLANTS,
-        "deaths": GLOBAL_STATS["deaths"] # Send persistent count
+        "plants": plants_list,
+        "deaths": stats['value'] if stats else 0
     })
 
 @app.route('/api/admin/update', methods=['POST'])
 def admin_update():
     data = request.json
-    if 'weather' in data:
-        admin_override['weather'] = data['weather']
-    if 'time_offset' in data:
-        print(f"Admin set time offset to {data['time_offset']} hours")
-        admin_override['time_offset'] = data['time_offset']
+    if 'weather' in data: admin_override['weather'] = data['weather']
+    if 'time_offset' in data: admin_override['time_offset'] = data['time_offset']
     return jsonify({"status": "ok", "overrides": admin_override})
-
-if __name__ == '__main__':
-    print(f"Serving everything from: {TARGET_FOLDER}")
-    app.run(host='0.0.0.0', port=5000, debug=True)
