@@ -9,7 +9,7 @@
     <style>
         html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: #000; }
         #game-container { position: relative; width: 100%; height: 100%; }
-        canvas { display: block; width: 100%; height: 100%; } 
+        canvas { display: block; width: 100%; height: 100%; touch-action: none; } /* Added touch-action: none for better mobile swipe */
     </style>
 </head>
 <body>
@@ -23,7 +23,7 @@
             
             <p style="color: rgba(255,255,255,0.7); margin-bottom: 50px; max-width: 400px; line-height: 1.6; font-size: 16px;">
                 Welcome to a shared digital ecosystem.<br>
-                Design unique plants, watch them grow in real-time, and protect them from dynamic weather with friends.
+                Design unique plants, watch them grow in real-time, and protect them from dynamic weather.
             </p>
 
             <button id="btn-start-game" class="glass-btn-circle" style="
@@ -37,6 +37,7 @@
                 text-transform: uppercase;
                 background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
                 border: 1px solid rgba(255,255,255,0.3);
+                cursor: pointer;
             ">
                 Enter Garden
             </button>
@@ -50,7 +51,7 @@
             <div id="tooltip-author" style="font-weight: bold; color: #4caf50; margin-bottom: 4px;"></div>
             <div style="display: flex; gap: 10px; font-size: 11px; color: #ccc;">
                 <span>❤️ <span id="tooltip-hp"></span></span>
-                <span>✨ <span id="tooltip-vit"></span></span>
+                <span>⚡ <span id="tooltip-vit"></span></span>
             </div>
             <div id="tooltip-growth-status" style="font-size: 10px; color: #888; margin-top: 4px;"></div>
             <div id="tooltip-age" style="font-size: 10px; color: #666; margin-top: 2px;"></div>
@@ -59,7 +60,7 @@
         <div id="ui-layer">
             <div class="hud-bar">
                 <div class="glass-panel">
-                    <span id="ui-time-icon" style="font-size: 18px;">☀️</span>
+                    <span id="ui-time-icon" style="font-size: 18px;">🕒</span>
                     <span id="ui-time-text">12:00</span>
                     <div class="divider"></div>
                     <span id="ui-weather">Sunny</span>
@@ -91,7 +92,7 @@
                 </div>
 
                  <div class="glass-panel" style="opacity: 0.8;">
-                    <span class="icon">☀️</span>
+                    <span class="icon">🔆</span>
                     <span id="ui-beams">0%</span>
                 </div>
             </div>
